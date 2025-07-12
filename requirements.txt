@@ -1,0 +1,17 @@
+# GUI
+customtkinter==5.2.2
+
+# Voice & Speech
+pyaudio==0.2.14
+pvporcupine==3.0.5
+# Install Whisper directly from GitHub for better compatibility
+git+https://github.com/openai/whisper.git
+edge-tts==6.1.9
+
+# AI & LLMs
+google-generativeai==0.5.4
+
+# Utilities
+dotenv
+rapidfuzz==3.9.1
+psutil==6.1.0
