@@ -7,6 +7,7 @@ from voice.wake_word_detector import WakeWordDetector
 from voice.whisper_listener import WhisperListener
 from voice.tts_speaker import TTSSpeaker
 from core.model_switcher import ModelSwitcher
+import difflib
 
 class AssistantController:
     """
@@ -96,7 +97,9 @@ class AssistantController:
 
     # --- Voice/Wake Word Integration ---
     def start_wake_word(self):
+        print(f"[DEBUG] Starting wake word detection")
         self.wake_word_detector.start()
+        print(f"[DEBUG] Wake word detection started")
     def stop_wake_word(self):
         self.wake_word_detector.stop()
 
@@ -140,13 +143,48 @@ class AssistantController:
             self.start_wake_word()
 
     def _on_tts_finish(self):
+        print(f"[DEBUG] _on_tts_finish callback triggered")
+        print(f"[DEBUG] TTS finished, restarting wake word detection")
         self.set_status("Idle")
+        
+        # Force stop TTS to ensure audio device is released
+        self.tts_speaker.stop()
+        
+        # Add a longer delay and more robust audio device handling
+        import threading
+        def delayed_start():
+            import time
+            time.sleep(1.5)  # Wait 1.5 seconds for audio system to fully settle
+            print(f"[DEBUG] Delayed wake word restart")
+            try:
+                self.start_wake_word()
+            except Exception as e:
+                print(f"[ERROR] Failed to restart wake word detection: {e}")
+                # Try again after another delay
+                time.sleep(1.0)
+                try:
+                    self.start_wake_word()
+                except Exception as e2:
+                    print(f"[ERROR] Second attempt failed: {e2}")
+        threading.Thread(target=delayed_start, daemon=True).start()
+        print(f"[DEBUG] Wake word detection restart scheduled")
+
+    def force_restart_wake_word(self):
+        """Manual method to force restart wake word detection"""
+        print(f"[DEBUG] Force restarting wake word detection")
+        self.stop_wake_word()
+        import time
+        time.sleep(0.5)
         self.start_wake_word()
 
     def _process_todo_command(self, text: str) -> bool:
         """Process voice commands for todo management"""
         text_lower = text.lower().strip()
-        print(f"[DEBUG] Processing todo command: '{text}'")
+        
+        # Quick check for todo-related keywords to avoid unnecessary processing
+        todo_keywords = ['todo', 'to-do', 'to do', 'task', 'tasks', 'add', 'remove', 'delete', 'list', 'clear']
+        if not any(keyword in text_lower for keyword in todo_keywords):
+            return False  # Not a todo command, skip detailed processing
         
         # Add todo commands
         add_keywords = ['add', 'put', 'remind me to', 'add to my', 'add to the', 'add to todo', 'add to to-do', 'add to to do']
@@ -163,7 +201,6 @@ class AssistantController:
                     self.transcription_callback(f"Ryo: {response}")
                 if self.gui_refresh_callback:
                     print(f"[DEBUG] Calling GUI refresh callback")
-                    # Use after() for thread safety with a small delay to ensure save completes
                     try:
                         # Try to get the GUI root from the callback function
                         import inspect
@@ -179,6 +216,7 @@ class AssistantController:
                         print(f"[ERROR] GUI refresh failed: {e}")
                         self.gui_refresh_callback()
                 self.tts_speaker.speak(response, on_finish=self._on_tts_finish)
+                print(f"[DEBUG] TTS called for todo command with response: {response}")
                 return True
             else:
                 print(f"[DEBUG] No task extracted")
@@ -224,9 +262,10 @@ class AssistantController:
                 self.tts_speaker.speak(response, on_finish=self._on_tts_finish)
                 return True
         
-        # List todos commands
-        list_keywords = ['what', 'list', 'show', 'what is on my', 'what is in my', 'what are my', 'list my', 'show my']
+        # List todos commands - make this more specific
+        list_keywords = ['list', 'show', 'what is on my', 'what is in my', 'what are my', 'list my', 'show my', 'tell me my']
         todo_keywords = ['todo', 'to-do', 'to do', 'tasks', 'task list']
+        # Only trigger if BOTH a list keyword AND a todo keyword are present
         if any(list_kw in text_lower for list_kw in list_keywords) and any(todo_kw in text_lower for todo_kw in todo_keywords):
             response = self._get_todo_list_response()
             if self.transcription_callback:
@@ -273,20 +312,18 @@ class AssistantController:
             'add', 'put', 'remind me to', 'add to my', 'add to the', 'add to todo', 'add to to-do', 'add to to do',
             'remove', 'delete', 'take off', 'remove from', 'delete from', 'remove from todo', 'delete from todo',
             'add to my todo', 'add to my to-do', 'add to my to do', 'add to the todo', 'add to the to-do', 'add to the to do',
-            'remove from my todo', 'remove from my to-do', 'remove from my to do', 'remove from the todo', 'remove from the to-do', 'remove from the to do'
+            'remove from my todo', 'remove from my to-do', 'remove from my to do', 'remove from the todo', 'remove from the to-do', 'remove from the to do',
+            'add to my todo list', 'add to my to-do list', 'add to my to do list', 'add to the todo list', 'add to the to-do list', 'add to the to do list'
         ]
-        
-        # Sort prefixes by length (longest first) to avoid partial matches
         prefixes_to_remove.sort(key=len, reverse=True)
-        
-        # Remove prefixes
         for prefix in prefixes_to_remove:
             if text_lower.startswith(prefix):
                 text = text[len(prefix):].strip()
+                text_lower = text.lower()  # <-- always update after prefix removal
                 print(f"[DEBUG] Removed prefix '{prefix}', result: '{text}'")
                 break
-        
-        # More comprehensive suffix removal - be more careful about what we remove
+        # Only remove suffixes if they are at the very end
+        text_lower = text.lower()  # <-- ensure this is always up to date before suffix check
         suffixes_to_remove = [
             'to my todo', 'to my to-do', 'to my to do', 'to the todo', 'to the to-do', 'to the to do',
             'from my todo', 'from my to-do', 'from my to do', 'from the todo', 'from the to-do', 'from the to do',
@@ -295,47 +332,29 @@ class AssistantController:
             'in todo', 'in to-do', 'in to do',
             'to my to-do list', 'to my todo list', 'to my to do list',
             'to the to-do list', 'to the todo list', 'to the to do list',
-            'to to-do list', 'to todo list', 'to to do list'
+            'to to-do list', 'to todo list', 'to to do list',
+            'on my todo', 'on my to-do', 'on my to do', 'on the todo', 'on the to-do', 'on the to do'
         ]
-        
-        # Sort suffixes by length (longest first)
         suffixes_to_remove.sort(key=len, reverse=True)
-        
-        # Remove suffixes - but only if they appear at the very end
         for suffix in suffixes_to_remove:
             if text_lower.endswith(suffix):
                 text = text[:-len(suffix)].strip()
+                text_lower = text.lower()
                 print(f"[DEBUG] Removed suffix '{suffix}', result: '{text}'")
                 break
-        
-        # Additional suffix cleanup for common patterns - be more careful
-        # Only remove these if they appear at the very end and are clearly not part of the task
-        additional_suffixes = ['to the do list', 'to do list', 'to the list', 'to my list', 'to list']
-        for suffix in additional_suffixes:
-            if text_lower.endswith(suffix):
-                text = text[:-len(suffix)].strip()
-                print(f"[DEBUG] Removed additional suffix '{suffix}', result: '{text}'")
-                break
-        
-        # Clean up extra words - be more selective about what we remove
-        # Only remove words that are clearly not part of the task
-        words_to_remove = ['todo', 'to-do', 'to do', 'task', 'tasks', 'item', 'items']
+        # Remove any generic words that shouldn't be part of the task
+        generic_words = ['task', 'tasks', 'item', 'items', 'todo', 'to-do', 'to do']
         words = text.split()
-        cleaned_words = []
+        filtered_words = []
         
         for word in words:
-            word_lower = word.lower()
-            # Don't remove common words that could be part of the task
-            # Only remove obvious todo-related words
-            if word_lower not in words_to_remove:
-                cleaned_words.append(word)
+            word_lower = word.lower().strip(',.!?')  # Remove punctuation
+            if word_lower not in generic_words:
+                filtered_words.append(word)
+            else:
+                print(f"[DEBUG] Removed generic word '{word}'")
         
-        text = ' '.join(cleaned_words).strip()
-        
-        # Additional cleanup for common patterns - be more careful
-        # Only remove these if they appear as complete phrases
-        text = text.replace('to my list', '').replace('to the list', '').replace('to list', '').strip()
-        
+        text = ' '.join(filtered_words).strip()
         print(f"[DEBUG] Final extracted task: '{text}'")
         return text
     
@@ -344,27 +363,54 @@ class AssistantController:
         todos = self.todo_manager.get_todos()
         task_text_lower = task_text.lower().strip()
         print(f"[DEBUG] Looking for task: '{task_text}'")
-        # First try exact match
+        
+        if not todos:
+            print(f"[DEBUG] No todos to match against.")
+            return None
+        
+        # First try exact match (case insensitive)
         for todo in todos:
             if task_text_lower == todo['text'].lower():
                 print(f"[DEBUG] Exact match found: '{todo['text']}'")
                 self.todo_manager.delete_todo(todo['id'])
                 return todo['text']
-        # Then try substring match
+        
+        # Then try substring match (more flexible)
         for todo in todos:
             todo_text_lower = todo['text'].lower()
-            if task_text_lower in todo_text_lower or todo_text_lower in task_text_lower:
-                print(f"[DEBUG] Substring match found: '{todo['text']}'")
+            # Check if the spoken text is contained in the todo text
+            if task_text_lower in todo_text_lower:
+                print(f"[DEBUG] Substring match found: '{todo['text']}' (contains '{task_text}')")
                 self.todo_manager.delete_todo(todo['id'])
                 return todo['text']
-        # Finally try word-based matching
+            # Check if the todo text is contained in the spoken text
+            elif todo_text_lower in task_text_lower:
+                print(f"[DEBUG] Substring match found: '{todo['text']}' (contained in '{task_text}')")
+                self.todo_manager.delete_todo(todo['id'])
+                return todo['text']
+        
+        # Finally try word-based matching (most flexible)
         task_words = set(task_text_lower.split())
+        best_match = None
+        best_score = 0
+        
         for todo in todos:
             todo_words = set(todo['text'].lower().split())
-            if len(task_words & todo_words) >= min(len(task_words), len(todo_words)) * 0.5:
-                print(f"[DEBUG] Word-based match found: '{todo['text']}'")
-                self.todo_manager.delete_todo(todo['id'])
-                return todo['text']
+            # Calculate word overlap score
+            if task_words and todo_words:
+                overlap = len(task_words & todo_words)
+                total_unique = len(task_words | todo_words)
+                score = overlap / total_unique if total_unique > 0 else 0
+                
+                if score > best_score and score >= 0.3:  # At least 30% word overlap
+                    best_score = score
+                    best_match = todo
+        
+        if best_match:
+            print(f"[DEBUG] Word-based match found: '{best_match['text']}' (score: {best_score:.2f})")
+            self.todo_manager.delete_todo(best_match['id'])
+            return best_match['text']
+        
         print(f"[DEBUG] No match found for: '{task_text}'")
         return None
     

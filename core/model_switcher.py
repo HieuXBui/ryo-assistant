@@ -3,6 +3,11 @@ import sys
 import threading
 from typing import Optional
 from ai.ollama_handler import OllamaHandler
+from core.config import GEMINI_API_KEY
+try:
+    import google.generativeai as genai
+except ImportError:
+    genai = None
 
 class ModelSwitcher:
     """
@@ -44,6 +49,8 @@ class ModelSwitcher:
         elif question_lower in ["what date is it", "what's the date", "date", "what day is it"]:
             from datetime import datetime
             return f"Today's date is {datetime.now().strftime('%B %d, %Y')}"
+        elif question_lower in ["what model am i using right now", "which model am i using", "what ai model am i using"]:
+            return f"You are currently using the Ollama model."
         elif "weather" in question_lower and ("what" in question_lower or "how" in question_lower):
             return "I don't have access to real-time weather data, but you can check your local weather app or website."
         elif question_lower in ["hello", "hi", "hey", "greetings", "good morning", "good afternoon", "good evening"]:
@@ -77,5 +84,64 @@ Try saying things like:
             return f"I'm having trouble reaching the Ollama model right now. ({e})"
     
     def _gemini_ask(self, question: str) -> str:
-        """Handle Gemini-style responses (similar to Ollama for now)"""
-        return self._ollama_ask(question) 
+        """Call Gemini API for text generation."""
+        print(f"[DEBUG] Gemini API called with: '{question}'")
+        
+        if not GEMINI_API_KEY:
+            print("[DEBUG] Gemini API key not found")
+            return "Gemini API key not found. Please set GEMINI_API_KEY in your .env file."
+        if genai is None:
+            print("[DEBUG] google-generativeai library not installed")
+            return "google-generativeai library not installed. Please install it."
+        
+        # Try gemini-2.5-pro first (latest stable), then fallback to gemini-2.5-flash
+        models_to_try = ["gemini-2.5-pro", "gemini-2.5-flash"]
+        
+        for model_name in models_to_try:
+            try:
+                print(f"[DEBUG] Trying Gemini model: {model_name}")
+                genai.configure(api_key=GEMINI_API_KEY)
+                model = genai.GenerativeModel(model_name)
+                
+                # Add system prompt to match Ollama behavior
+                system_prompt = (
+                    "You are Ryo, a smart and efficient AI voice assistant. Keep responses brief and to the point.\n\n"
+                    "Your personality:\n"
+                    "- Helpful and friendly\n"
+                    "- Concise in responses\n"
+                    "- Good at math and problem solving\n"
+                    "- Can manage todo lists\n"
+                    "- Responds naturally to casual conversation\n\n"
+                    "Important: If the user asks 'what model am I using right now', 'which model am I using', or 'what AI model am I using', always respond with 'You are currently using the Gemini model.'\n\n"
+                    "Keep responses under 2-3 sentences unless the user asks for more detail."
+                )
+                
+                # Create the full prompt with system instruction
+                full_prompt = f"{system_prompt}\n\nUser: {question}\nRyo:"
+                
+                response = model.generate_content(full_prompt)
+                
+                if hasattr(response, 'text'):
+                    result = response.text.strip()
+                    print(f"[DEBUG] Gemini response received: {result[:100]}...")
+                    return result
+                else:
+                    result = str(response)
+                    print(f"[DEBUG] Gemini response (no text attr): {result[:100]}...")
+                    return result
+                    
+            except Exception as e:
+                error_str = str(e).lower()
+                print(f"[DEBUG] Gemini model {model_name} error: {e}")
+                
+                if "quota" in error_str or "exceeded" in error_str:
+                    if model_name == models_to_try[-1]:  # Last model tried
+                        return f"Gemini API quota exceeded. Please try again later or check your Google AI Studio quota."
+                    continue  # Try next model
+                elif model_name == models_to_try[-1]:  # Last model tried
+                    return f"Gemini API error: {e}"
+                else:
+                    continue  # Try next model
+        
+        print("[DEBUG] All Gemini models failed")
+        return "Gemini API error: All models failed" 

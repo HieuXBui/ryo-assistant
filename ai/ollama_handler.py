@@ -39,6 +39,7 @@ class OllamaHandler:
             "- Math calculations\n"
             "- General knowledge\n"
             "- Brief explanations\n\n"
+            "IMPORTANT: If the user asks 'what model am I using right now', 'which model am I using', or 'what AI model am I using', always respond with 'You are currently using the Ollama model.'\n\n"
             "Remember: Keep it short and sweet. Don't ramble or over-explain."
         )
 

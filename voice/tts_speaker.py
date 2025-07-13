@@ -84,7 +84,21 @@ class TTSSpeaker:
         except Exception as e:
             print(f"An error occurred in TTS generation/playback: {e}")
         finally:
+            # Ensure the playback process is completely stopped
+            if self.playback_process and self.playback_process.poll() is None:
+                try:
+                    self.playback_process.terminate()
+                    self.playback_process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    self.playback_process.kill()
+                except Exception as e:
+                    print(f"Error terminating playback process: {e}")
             self.playback_process = None
+            
+            # Add a small delay to ensure audio device is released
+            import time
+            time.sleep(0.2)
+            
             if self.on_finish_callback:
                 self.on_finish_callback()
 

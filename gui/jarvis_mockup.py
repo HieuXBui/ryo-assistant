@@ -116,6 +116,22 @@ class JarvisUI(ctk.CTk, DraggablePanel):
         self.title("Ryo JARVIS HUD Prototype")
         self.geometry("1280x820")
         
+        # --- Model Switcher Dropdown ---
+        self.model_var = ctk.StringVar(value=self.controller.model_switcher.active_model_name)
+        self.model_switcher = ctk.CTkOptionMenu(
+            self,
+            values=["Ollama", "Gemini"],
+            variable=self.model_var,
+            command=self._on_model_switch,
+            width=120,
+            font=("Orbitron", 14),
+            fg_color=BLUE,
+            button_color=BLUE,
+            button_hover_color=CYAN,
+            text_color=BG
+        )
+        self.model_switcher.place(x=160, y=20)
+        
         # --- Transparency Options ---
         # Option 1: Semi-transparent background (0.0 = fully transparent, 1.0 = fully opaque)
         self.attributes('-alpha', 0.9)  # 90% opacity
@@ -166,10 +182,18 @@ class JarvisUI(ctk.CTk, DraggablePanel):
         reset_btn = ctk.CTkButton(self, text="Reset Layout", fg_color=BLUE, text_color=BG, font=FONT_LABEL, command=self._reset_layout)
         reset_btn.place(x=20, y=20)
         
+        # Add wake word restart button
+        restart_wake_btn = ctk.CTkButton(self, text="Restart Wake Word", fg_color=TEAL, text_color=BG, font=FONT_LABEL, command=self._restart_wake_word)
+        restart_wake_btn.place(x=20, y=100)
+        
         # Add transparency toggle button
         self.transparency_level = 0.9  # Start with 90% opacity
         transparency_btn = ctk.CTkButton(self, text="Toggle Transparency", fg_color=TEAL, text_color=BG, font=FONT_LABEL, command=self._toggle_transparency)
         transparency_btn.place(x=20, y=60)
+
+    def _restart_wake_word(self):
+        """Manually restart wake word detection"""
+        self.controller.force_restart_wake_word()
 
     def _reset_layout(self):
         for name, panel in self.panels.items():
@@ -614,6 +638,10 @@ class JarvisUI(ctk.CTk, DraggablePanel):
             except Exception:
                 pass
         threading.Thread(target=cleanup, daemon=True).start()
+
+    def _on_model_switch(self, value):
+        self.controller.model_switcher.set_active_model(value)
+        self.model_var.set(value)
 
 if __name__ == "__main__":
     controller = AssistantController()

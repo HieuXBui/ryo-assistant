@@ -64,4 +64,15 @@ class WhisperListener:
             text = result["text"].strip()
             print(f"[WhisperListener] Transcribed: '{text}'")
             if on_finish:
-                on_finish(text) 
+                on_finish(text)
+
+    def stop(self):
+        """Force stop any ongoing recording"""
+        if self.is_recording:
+            print("[WhisperListener] Force stopping recording...")
+            self.is_recording = False
+            if self.recording_thread and self.recording_thread.is_alive():
+                self.recording_thread.join(timeout=1)
+            # Add a small delay to ensure audio device is released
+            import time
+            time.sleep(0.1) 

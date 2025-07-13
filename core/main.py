@@ -394,8 +394,47 @@ class RyoCore:
     def reset_to_idle(self):
         """Resets the application to the idle state and restarts wake word detection."""
         self.update_status("Idle")
-        if not self.wake_word_detector.is_running():
-            self.wake_word_detector.start()
+        
+        # Force stop TTS and whisper listener to ensure audio device is released
+        self.speaker.stop()
+        self.listener.stop()
+        
+        # Add a delay and more robust audio device handling
+        def delayed_start():
+            import time
+            time.sleep(1.5)  # Wait 1.5 seconds for audio system to fully settle
+            print(f"[DEBUG] Delayed wake word restart")
+            try:
+                if not self.wake_word_detector.is_running():
+                    # Use retry mechanism for better handling of audio device conflicts
+                    self.wake_word_detector.start_with_retry(max_retries=3, retry_delay=5)
+            except Exception as e:
+                print(f"[ERROR] Failed to restart wake word detection: {e}")
+                # Try again after another delay
+                time.sleep(1.0)
+                try:
+                    if not self.wake_word_detector.is_running():
+                        self.wake_word_detector.start_with_retry(max_retries=2, retry_delay=3)
+                except Exception as e2:
+                    print(f"[ERROR] Second attempt failed: {e2}")
+                    # Final attempt with force restart
+                    time.sleep(0.5)
+                    try:
+                        self.wake_word_detector.force_restart()
+                    except Exception as e3:
+                        print(f"[ERROR] Force restart also failed: {e3}")
+        
+        threading.Thread(target=delayed_start, daemon=True).start()
+        print(f"[DEBUG] Wake word detection restart scheduled")
+
+    def force_restart_wake_word(self):
+        """Manual method to force restart wake word detection - useful for debugging"""
+        print(f"[DEBUG] Force restarting wake word detection from main core")
+        self.speaker.stop()
+        self.listener.stop()
+        import time
+        time.sleep(0.5)
+        self.wake_word_detector.force_restart()
 
 # --- Step 5: SSL Context and Application Entry Point ---
 

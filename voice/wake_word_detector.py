@@ -124,6 +124,8 @@ class WakeWordDetector:
 
     def start(self):
         """Starts the wake word detection process in a separate, non-blocking thread."""
+        print(f"[DEBUG] WakeWordDetector.start() called")
+        
         # If Porcupine failed to initialize, we can't start.
         if not self.porcupine:
             print("Wake word detection disabled (no Porcupine access key or initialization failed)")
@@ -134,8 +136,20 @@ class WakeWordDetector:
             print("[WakeWordDetector] Already running.")
             return
 
+        # Ensure any existing thread is properly stopped
+        if self._thread and self._thread.is_alive():
+            print("[DEBUG] Stopping existing thread before restart")
+            self.stop()
+            import time
+            time.sleep(0.1)  # Brief pause to ensure cleanup
+
         # Open a fresh audio stream each time we start.
         try:
+            print(f"[DEBUG] Attempting to open audio stream...")
+            print(f"[DEBUG] Sample rate: {self.porcupine.sample_rate}")
+            print(f"[DEBUG] Frame length: {self.porcupine.frame_length}")
+            print(f"[DEBUG] PyAudio instance: {self.p_audio}")
+            
             self.audio_stream = self.p_audio.open(
                 rate=self.porcupine.sample_rate,
                 channels=1,
@@ -143,9 +157,63 @@ class WakeWordDetector:
                 input=True,
                 frames_per_buffer=self.porcupine.frame_length
             )
+            print(f"[DEBUG] Audio stream opened successfully")
         except Exception as e:
+            error_msg = str(e).lower()
             print(f"Failed to open audio stream for wake word detector: {e}")
-            return
+            print(f"[DEBUG] Audio stream error details: {type(e).__name__}: {e}")
+            
+            # Check if it's a device busy error (common with FaceTime, calls, etc.)
+            if "busy" in error_msg or "10863" in error_msg or "cannot do in current context" in error_msg:
+                print("[WARNING] Audio device appears to be busy (possibly due to FaceTime, calls, or other audio apps)")
+                print("[INFO] Wake word detection will be disabled until audio device is available")
+                return
+            
+            # Try to reinitialize PyAudio and try again
+            try:
+                print(f"[DEBUG] Attempting to reinitialize PyAudio...")
+                if self.p_audio:
+                    self.p_audio.terminate()
+                self.p_audio = pyaudio.PyAudio()
+                print(f"[DEBUG] PyAudio reinitialized, trying again...")
+                
+                self.audio_stream = self.p_audio.open(
+                    rate=self.porcupine.sample_rate,
+                    channels=1,
+                    format=pyaudio.paInt16,
+                    input=True,
+                    frames_per_buffer=self.porcupine.frame_length
+                )
+                print(f"[DEBUG] Audio stream opened successfully after reinitialization")
+            except Exception as e2:
+                error_msg2 = str(e2).lower()
+                if "busy" in error_msg2 or "10863" in error_msg2 or "cannot do in current context" in error_msg2:
+                    print("[WARNING] Audio device still busy after PyAudio reinitialization")
+                    print("[INFO] Wake word detection will be disabled until audio device is available")
+                    return
+                print(f"Failed to reinitialize PyAudio: {e2}")
+                # Try one more time with a fresh PyAudio instance
+                try:
+                    print(f"[DEBUG] Final attempt with fresh PyAudio...")
+                    if self.p_audio:
+                        self.p_audio.terminate()
+                    self.p_audio = pyaudio.PyAudio()
+                    self.audio_stream = self.p_audio.open(
+                        rate=self.porcupine.sample_rate,
+                        channels=1,
+                        format=pyaudio.paInt16,
+                        input=True,
+                        frames_per_buffer=self.porcupine.frame_length
+                    )
+                    print(f"[DEBUG] Audio stream opened successfully on final attempt")
+                except Exception as e3:
+                    error_msg3 = str(e3).lower()
+                    if "busy" in error_msg3 or "10863" in error_msg3 or "cannot do in current context" in error_msg3:
+                        print("[WARNING] Audio device busy on final attempt")
+                        print("[INFO] Wake word detection will be disabled until audio device is available")
+                    else:
+                        print(f"All attempts to open audio stream failed: {e3}")
+                    return
 
         # Set the running flag to True to start the loop in the thread.
         self._running = True
@@ -159,6 +227,8 @@ class WakeWordDetector:
     def _run(self):
         """The main loop that continuously reads audio from the mic and checks for the wake word."""
         print("[WakeWordDetector] Listening for wake word...")
+        print(f"[DEBUG] Wake word detection thread started, porcupine: {self.porcupine is not None}")
+        
         # This loop will continue as long as the 'running' flag is True.
         while self._running:
             try:
@@ -214,7 +284,52 @@ class WakeWordDetector:
             finally:
                 self.audio_stream = None
 
+        # Add a small delay to ensure audio device is fully released
+        import time
+        time.sleep(0.1)
         print("Wake word detector stopped.")
+
+    def force_restart(self):
+        """Force restart the wake word detector by stopping and starting it."""
+        print("[DEBUG] Force restarting wake word detector...")
+        self.stop()
+        import time
+        time.sleep(0.5)  # Wait for cleanup
+        self.start()
+
+    def start_with_retry(self, max_retries=5, retry_delay=10):
+        """Start wake word detection with automatic retry if audio device is busy"""
+        print(f"[DEBUG] Starting wake word detection with retry (max {max_retries} attempts, {retry_delay}s delay)")
+        
+        def retry_worker():
+            import time
+            for attempt in range(max_retries):
+                try:
+                    print(f"[DEBUG] Attempt {attempt + 1}/{max_retries} to start wake word detection")
+                    self.start()
+                    
+                    # Check if it actually started
+                    if self.is_running():
+                        print(f"[DEBUG] Wake word detection started successfully on attempt {attempt + 1}")
+                        return
+                    else:
+                        print(f"[DEBUG] Wake word detection failed to start on attempt {attempt + 1}")
+                        
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    if "busy" in error_msg or "10863" in error_msg or "cannot do in current context" in error_msg:
+                        print(f"[INFO] Audio device busy on attempt {attempt + 1}, will retry in {retry_delay} seconds...")
+                    else:
+                        print(f"[ERROR] Unexpected error on attempt {attempt + 1}: {e}")
+                
+                if attempt < max_retries - 1:  # Don't sleep after the last attempt
+                    time.sleep(retry_delay)
+            
+            print(f"[WARNING] Failed to start wake word detection after {max_retries} attempts")
+            print("[INFO] Audio device may still be busy. Try ending calls or closing audio apps.")
+        
+        # Run retry in background thread
+        threading.Thread(target=retry_worker, daemon=True).start()
 
     def __del__(self):
         """This is a special Python method called a destructor. It ensures cleanup happens
