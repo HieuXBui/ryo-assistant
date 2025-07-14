@@ -1,6 +1,6 @@
 # Ryo AI Assistant
 
-A sophisticated voice-activated AI assistant built with Python, featuring wake word detection, speech-to-text, AI-powered responses, and text-to-speech capabilities.
+A voice-activated AI assistant built with Python, featuring wake word detection, speech-to-text, AI-powered responses, and text-to-speech capabilities. **Currently in active development - work in progress.**
 
 ## Features
 
