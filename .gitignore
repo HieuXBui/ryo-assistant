@@ -246,6 +246,8 @@ tmp/
 *.pem
 *.p12
 *.pfx
+.env
+
 
 # Backup files
 *.bak
